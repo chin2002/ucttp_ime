@@ -1,0 +1,214 @@
+#include <iostream>
+#include <time.h>
+#include <vector>
+#include <fstream>
+#include "ilcplex/ilocplex.h"
+
+using namespace std;
+
+
+int main()
+{
+    clock_t tic = 0, tac = 0;
+    tic = clock();
+
+
+
+    long long Classes, Days_per_week, Teachers, Periods_per_day, Rooms;
+  
+   
+     
+
+    ifstream data;
+
+    data.open("dim.txt");
+
+    if (!data.is_open()) {
+
+        cout << "dim.txt file not found\n";
+        return 0;
+       
+    }
+    else {
+        data >> Classes >> Teachers >> Rooms >> Days_per_week >> Periods_per_day;
+        data.close();
+    }
+
+
+
+    long long total_classes = Periods_per_day * Days_per_week;
+
+
+    vector<vector<long long>>  temp(Classes * Rooms, vector<long long>(Teachers, 0));
+
+    ifstream mat;
+    mat.open("matrix.txt");
+
+    if (!mat.is_open())
+    {
+        cout << "matrix.txt file not found\n";
+        return 0;
+       
+    }
+    else
+    {
+        for (long long i = 0; i < Classes * Rooms; i++)
+            for (long long j = 0; j < Teachers; j++)
+                mat >> temp[i][j];
+
+        mat.close();
+    }
+    
+
+
+    IloEnv env;
+    IloArray<IloArray<IloArray<IloNumVarArray>>> X(env, Classes);
+    IloModel mdl(env);
+
+    for (long long i = 0; i < Classes; i++) {
+        X[i] = IloArray<IloArray<IloNumVarArray>>(env, Teachers);
+        for (long long j = 0; j < Teachers; j++) {
+            X[i][j] = IloArray<IloNumVarArray>(env, total_classes);
+            for (long long k = 0; k < total_classes; k++) {
+                X[i][j][k] = IloNumVarArray(env, Rooms, 0, 1, ILOINT);    // 0-1 Integer Decision Variable 
+            }
+        }
+    }
+
+
+    IloRangeArray constraint1(env);   //  Matching the required defined in matrix.txt
+    for (long long i = 0; i < Classes; i++) {
+        for (long long j = 0; j < Teachers; j++) {
+            for (long long l = 0; l < Rooms; l++) {
+                IloExpr exp(env);
+                for (long long k = 0; k < total_classes; k++) {
+                    exp += X[i][j][k][l];
+                }
+                long long tmp = Classes * l + i;
+                constraint1.add(exp == temp[tmp][j]);
+                exp.end();
+            }
+        }
+    }
+    
+
+
+    IloRangeArray constraint2(env);   // only one class in kth slot and lth room
+    for (long long k = 0; k < total_classes; k++) {
+        for (long long l = 0; l < Rooms; l++) {
+            IloExpr exp(env);
+            for (long long i = 0; i < Classes; i++) {
+                for (long long j = 0; j < Teachers; j++) {
+                    exp += X[i][j][k][l];
+                }
+            }
+            constraint2.add(exp <= 1);
+            exp.end();
+        }
+    }
+
+    
+
+
+    IloRangeArray constraint3(env);   // one teacher in a fixed slot can take only one class
+    for (long long j = 0; j < Teachers; j++) {
+        for (long long k = 0; k < total_classes; k++) {
+            IloExpr exp(env);
+            for (long long i = 0; i < Classes; i++) {
+                for (long long l = 0; l < Rooms; l++) {
+                    exp += X[i][j][k][l];
+                }
+            }
+            constraint3.add(exp <= 1);
+            exp.end();
+        }
+    }
+
+
+    
+
+
+
+    IloRangeArray constraint4(env);   // for one slot only one class can happen
+    for (long long i = 0; i < Classes; i++) {
+        for (long long k = 0; k < total_classes; k++) {
+            IloExpr exp(env);
+            for (long long j = 0; j < Teachers; j++) {
+                for (long long l = 0; l < Rooms; l++) {
+                    exp += X[i][j][k][l];
+                }
+            }
+            constraint4.add(exp <= 1);
+            exp.end();
+        }
+    }
+
+
+    
+
+    
+    IloExpr objective(env);
+    objective += 1;
+    //Feasibility problem so objective function doesn't really matter.
+   
+
+
+    mdl.add(IloMinimize(env, objective)); // add objective function to model
+
+
+
+    mdl.add(constraint1);
+    mdl.add(constraint2);
+    mdl.add(constraint3);
+    mdl.add(constraint4);
+
+
+
+    objective.end();
+
+
+
+    IloCplex cplex(mdl);
+    cplex.setOut(env.getNullStream());  //Do not show calculation steps on command prompt
+    cplex.solve();
+
+
+
+    vector<vector<pair<long long,long long>>> res(Rooms, vector<pair<long long,long long>>(total_classes));
+    //res[l][k] stores two integers {i, j}, which meres during kth slot in the lth room jth teacher teaches ith class
+    for (long long i = 0; i < Classes; i++) {
+        for (long long j = 0; j < Teachers; j++) {
+            for (long long k = 0; k < total_classes; k++) {
+                for (long long l = 0; l < Rooms; l++) {
+                    long long val = cplex.getValue(X[i][j][k][l]);
+                    if (val == 1) {
+                        res[l][k] = { i, j };
+                    }
+                }
+            }
+        }
+    }
+
+    tac = clock();
+    double time_taken = double(tac - tic) / double(CLOCKS_PER_SEC);
+    cout << "Total Time taken : " << fixed << time_taken << " seconds" << endl;
+
+
+    ofstream write("output.txt");
+
+
+    for (long long i = 0; i < Rooms; i++) {
+        for (long long j = 0; j < total_classes; j++) {
+            write << res[i][j].first << " " << res[i][j].second << " |";
+            cout << res[i][j].first << " " << res[i][j].second << " |";
+            
+        }
+        cout << endl;
+        write << endl;
+    }
+
+    write.close();
+    env.end();
+}
+
+
